@@ -1,0 +1,66 @@
+{
+  "accounts": [
+    {
+      "id": "1778873852175",
+      "name": "Ragnar",
+      "type": "lent",
+      "rates": [
+        {
+          "from": "2025-11",
+          "rate": 3.5
+        }
+      ],
+      "installments": [
+        {
+          "date": "2025-11-24",
+          "amount": 1117250,
+          "note": ""
+        },
+        {
+          "date": "2025-11-26",
+          "amount": 650000,
+          "note": ""
+        },
+        {
+          "date": "2025-12-10",
+          "amount": 376250,
+          "note": ""
+        },
+        {
+          "date": "2025-12-30",
+          "amount": 89250,
+          "note": ""
+        },
+        {
+          "date": "2026-01-07",
+          "amount": 376250,
+          "note": ""
+        },
+        {
+          "date": "2026-01-08",
+          "amount": 138038,
+          "note": ""
+        },
+        {
+          "date": "2026-02-13",
+          "amount": 80000,
+          "note": ""
+        }
+      ],
+      "payments": []
+    },
+    {
+      "id": "1778873971686",
+      "name": "Bianca",
+      "type": "borrowed",
+      "rates": [
+        {
+          "from": "2026-01",
+          "rate": 5
+        }
+      ],
+      "installments": [],
+      "payments": []
+    }
+  ]
+}
