@@ -135,7 +135,7 @@
   <div id="esec" class="hidden"><p class="stitle">All entries — tap 🗑 to delete and re-enter to correct</p><div class="elist" id="elist"></div></div>
 
   <div id="tsec" class="hidden ptable">
-    <p class="stitle" style="margin-bottom:10px;">Monthly ledger</p>
+    <p class="stitle" style="margin-bottom:10px;">Monthly ledger <span style="font-weight:400;font-size:11px;color:var(--tx2);">— interest calculated daily</span></p>
     <div style="overflow-x:auto;">
       <table>
         <thead><tr>
@@ -200,13 +200,112 @@
 let db={accounts:[]},cid=null;
 function fmt(n){return n.toLocaleString('sv-SE',{minimumFractionDigits:2,maximumFractionDigits:2})+' kr';}
 function fmtR(r){return r.toLocaleString('sv-SE',{minimumFractionDigits:1,maximumFractionDigits:2})+'%';}
-function mk(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+function mkKey(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
 function ml(key){const[y,m]=key.split('-');return new Date(+y,+m-1,1).toLocaleString('sv-SE',{month:'long',year:'numeric'});}
 function save(){try{localStorage.setItem('lt_v4',JSON.stringify(db));}catch(e){}}
 function load(){try{const s=localStorage.getItem('lt_v4');if(s)db=JSON.parse(s);}catch(e){}}
 function cur(){return db.accounts.find(a=>a.id===cid)||null;}
-function rateFor(acc,m){const a=acc.rates.filter(r=>r.from<=m);return a.length?a[a.length-1].rate:acc.rates[0].rate;}
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);}
+
+// Parse date string to local midnight date
+function parseDate(str){const[y,m,d]=str.split('-').map(Number);return new Date(y,m-1,d);}
+
+// Days in a month
+function daysInMonth(year,month){return new Date(year,month,0).getDate();}
+
+// Get applicable annual rate for a given date
+function rateForDate(acc,date){
+  const dk=mkKey(date);
+  const applicable=acc.rates.filter(r=>r.from<=dk);
+  return applicable.length?applicable[applicable.length-1].rate:acc.rates[0].rate;
+}
+
+// Daily interest calculation
+// For each month, we walk day by day tracking the running balance
+// and accumulate interest = balance * (annualRate/365) per day
+function buildLedger(acc){
+  const allEvents=[
+    ...acc.installments.map(e=>({date:parseDate(e.date),amount:e.amount,type:'i'})),
+    ...acc.payments.map(e=>({date:parseDate(e.date),amount:e.amount,type:'p'}))
+  ];
+  if(!allEvents.length) return [];
+
+  allEvents.sort((a,b)=>a.date-b.date);
+
+  // Find start and end dates
+  const startDate=new Date(allEvents[0].date);
+  const now=new Date();
+  const endDate=new Date(now.getFullYear(),now.getMonth()+1,0); // last day of current month
+
+  // Build a map of events by date string
+  const eventsByDate={};
+  for(const e of allEvents){
+    const dk=e.date.toISOString().slice(0,10);
+    if(!eventsByDate[dk])eventsByDate[dk]=[];
+    eventsByDate[dk].push(e);
+  }
+
+  // Group into months for ledger display
+  const months=[];
+  let cur=new Date(startDate.getFullYear(),startDate.getMonth(),1);
+  const endMonth=new Date(now.getFullYear(),now.getMonth(),1);
+  while(cur<=endMonth){
+    months.push(mkKey(cur));
+    cur=new Date(cur.getFullYear(),cur.getMonth()+1,1);
+  }
+
+  // Walk day by day through all months
+  const rows=[];
+  let balance=0;
+
+  for(const mk of months){
+    const[y,m]=mk.split('-').map(Number);
+    const daysCount=daysInMonth(y,m);
+    const monthStart=new Date(y,m-1,1);
+
+    let monthInterest=0;
+    let monthLoaned=0;
+    let monthPaid=0;
+    const openingBalance=balance;
+
+    for(let day=1;day<=daysCount;day++){
+      const date=new Date(y,m-1,day);
+      if(date>endDate) break;
+
+      const dk=date.toISOString().slice(0,10);
+
+      // Apply events for this day (installments and payments)
+      if(eventsByDate[dk]){
+        for(const e of eventsByDate[dk]){
+          if(e.type==='i'){balance+=e.amount;monthLoaned+=e.amount;}
+          else{balance-=e.amount;monthPaid+=e.amount;}
+        }
+      }
+
+      // Accrue daily interest on current balance
+      // Only accrue if balance is positive
+      if(balance>0){
+        const annualRate=rateForDate(acc,date);
+        const dailyRate=annualRate/100/365;
+        const dailyInterest=balance*dailyRate;
+        monthInterest+=dailyInterest;
+        balance+=dailyInterest;
+      }
+    }
+
+    rows.push({
+      mk,
+      opening:openingBalance,
+      loaned:monthLoaned,
+      paid:monthPaid,
+      interest:monthInterest,
+      closing:balance,
+      rate:rateForDate(acc,monthStart)
+    });
+  }
+
+  return rows;
+}
 
 function openNew(){
   document.getElementById('nname').value='';document.getElementById('ntype').value='lent';
@@ -293,26 +392,6 @@ function removeEntry(type,idx){
   save();renderAcc();
 }
 
-function buildLedger(acc){
-  const all=[...acc.installments.map(e=>({...e,type:'i'})),...acc.payments.map(e=>({...e,type:'p'}))];
-  if(!all.length)return[];
-  all.sort((a,b)=>a.date.localeCompare(b.date));
-  const s=new Date(all[0].date+'T00:00:00');
-  if(acc.rates.length){const rs=new Date(acc.rates[0].from+'-01T00:00:00');if(rs<s){s.setFullYear(rs.getFullYear(),rs.getMonth(),1);}}
-  const now=new Date(),months=[];
-  let c=new Date(s.getFullYear(),s.getMonth(),1),end=new Date(now.getFullYear(),now.getMonth(),1);
-  while(c<=end){months.push(mk(c));c=new Date(c.getFullYear(),c.getMonth()+1,1);}
-  const lb={},pb={};
-  for(const e of acc.installments){const m=e.date.substring(0,7);lb[m]=(lb[m]||0)+e.amount;}
-  for(const e of acc.payments){const m=e.date.substring(0,7);pb[m]=(pb[m]||0)+e.amount;}
-  const rows=[];let bal=0;
-  for(const m of months){
-    const op=bal,lo=lb[m]||0,ar=rateFor(acc,m),int=(op+lo)*ar/100/12,pa=pb[m]||0;
-    bal=op+lo+int-pa;rows.push({m,op,lo,int,pa,cl:bal,rate:ar});
-  }
-  return rows;
-}
-
 function renderAll(){
   const sel=document.getElementById('account-select');sel.innerHTML='';
   const empty=document.getElementById('empty');
@@ -336,19 +415,26 @@ function renderAll(){
 function renderAcc(){
   const acc=cur();if(!acc)return;
   labels(acc.type);document.getElementById('abar').classList.remove('hidden');
-  document.getElementById('ratelabel').textContent='Current rate: '+fmtR(rateFor(acc,mk(new Date())))+' / year';
+  const now=new Date();
+  const nowKey=mkKey(now);
+  const applicable=acc.rates.filter(r=>r.from<=nowKey);
+  const currentRate=applicable.length?applicable[applicable.length-1].rate:acc.rates[0].rate;
+  document.getElementById('ratelabel').textContent='Current rate: '+fmtR(currentRate)+' / year (daily accrual)';
+
   const rows=buildLedger(acc);
   const tl=acc.installments.reduce((s,e)=>s+e.amount,0);
   const tp=acc.payments.reduce((s,e)=>s+e.amount,0);
-  const ti=rows.reduce((s,r)=>s+r.int,0);
-  const cb=rows.length?rows[rows.length-1].cl:0;
+  const ti=rows.reduce((s,r)=>s+r.interest,0);
+  const cb=rows.length?rows[rows.length-1].closing:0;
   document.getElementById('sp').textContent=tl>0?fmt(tl):'—';
   document.getElementById('spd').textContent=tp>0?fmt(tp):'—';
   document.getElementById('sb').textContent=tl>0?fmt(Math.max(0,cb)):'—';
   document.getElementById('si').textContent=tl>0?fmt(ti):'—';
+
   const today=new Date().toISOString().slice(0,10);
   if(!document.getElementById('iid').value)document.getElementById('iid').value=today;
   if(!document.getElementById('ipd').value)document.getElementById('ipd').value=today;
+
   const hasD=acc.installments.length>0||acc.payments.length>0;
   const esec=document.getElementById('esec'),elist=document.getElementById('elist');
   elist.innerHTML='';
@@ -372,13 +458,14 @@ function renderAcc(){
       elist.appendChild(div);
     }
   }else{esec.classList.add('hidden');}
+
   const tsec=document.getElementById('tsec');
   if(rows.length){
     tsec.classList.remove('hidden');const tbody=document.getElementById('tbody');tbody.innerHTML='';let pr=null;
     for(const r of rows){
       const tr=document.createElement('tr');
       const rc=r.rate!==pr&&pr!==null?'var(--ta)':'var(--tx2)';
-      tr.innerHTML=`<td>${ml(r.m)}</td><td>${fmt(r.op)}</td><td style="color:${r.lo>0?'var(--td)':'var(--tx2)'};">${r.lo>0?'+'+fmt(r.lo):'—'}</td><td style="color:${rc};">${fmtR(r.rate)}</td><td style="color:var(--tx2);">+${fmt(r.int)}</td><td style="color:${r.pa>0?'var(--ts)':'var(--tx2)'};">${r.pa>0?'−'+fmt(r.pa):'—'}</td><td style="font-weight:500;">${fmt(Math.max(0,r.cl))}</td>`;
+      tr.innerHTML=`<td>${ml(r.mk)}</td><td>${fmt(r.opening)}</td><td style="color:${r.loaned>0?'var(--td)':'var(--tx2)'};">${r.loaned>0?'+'+fmt(r.loaned):'—'}</td><td style="color:${rc};">${fmtR(r.rate)}</td><td style="color:var(--tx2);">+${fmt(r.interest)}</td><td style="color:${r.paid>0?'var(--ts)':'var(--tx2)'};">${r.paid>0?'−'+fmt(r.paid):'—'}</td><td style="font-weight:500;">${fmt(Math.max(0,r.closing))}</td>`;
       tbody.appendChild(tr);pr=r.rate;
     }
   }else{tsec.classList.add('hidden');}
