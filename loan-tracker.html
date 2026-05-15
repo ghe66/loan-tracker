@@ -48,8 +48,6 @@
     label { font-size: 11px; color: var(--tx2); display: block; margin-bottom: 3px; }
     input[type=date], input[type=number], input[type=text] { width: 100%; padding: 7px 9px; border: 0.5px solid var(--br); border-radius: var(--rm); background: var(--bg2); color: var(--tx); font-size: 13px; outline: none; margin-bottom: 7px; font-family: var(--font); }
     input:focus { border-color: var(--brh); }
-    textarea { width: 100%; padding: 9px; border: 0.5px solid var(--br); border-radius: var(--rm); background: var(--bg2); color: var(--tx); font-size: 12px; outline: none; font-family: monospace; resize: vertical; min-height: 120px; margin-bottom: 8px; }
-    textarea:focus { border-color: var(--brh); }
     button { padding: 7px 12px; border: 0.5px solid var(--brh); border-radius: var(--rm); background: transparent; color: var(--tx); font-size: 13px; cursor: pointer; font-family: var(--font); }
     button:hover { background: var(--bg2); }
     button:active { transform: scale(.98); }
@@ -80,10 +78,6 @@
     .toast { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--tx); color: var(--bg); padding: 10px 18px; border-radius: var(--rm); font-size: 13px; opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; white-space: nowrap; z-index: 300; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     .hidden { display: none; }
-    .import-panel { background: var(--bg); border: 0.5px solid var(--bg-amber); border-radius: var(--rl); padding: 1rem; margin-bottom: 1.25rem; }
-    .import-panel .pt { color: var(--ta); }
-    .divider { display: flex; align-items: center; gap: 8px; margin: 10px 0; color: var(--tx2); font-size: 11px; }
-    .divider::before, .divider::after { content: ''; flex: 1; height: 0.5px; background: var(--br); }
   </style>
 </head>
 <body>
@@ -98,19 +92,6 @@
       <button class="bi" onclick="exportData()"><i class="ti ti-download"></i> Save backup</button>
       <button class="bi" onclick="document.getElementById('fimp').click()"><i class="ti ti-upload"></i> Load backup</button>
       <input type="file" id="fimp" accept=".json" style="display:none;" onchange="importFile(event)" />
-      <button class="bamber" onclick="openPasteImport()"><i class="ti ti-clipboard"></i> Paste backup</button>
-    </div>
-  </div>
-
-  <!-- Paste import panel (shown when triggered) -->
-  <div id="paste-panel" class="import-panel hidden">
-    <p class="pt"><i class="ti ti-clipboard" style="color:var(--ta);"></i> Paste your backup data</p>
-    <p style="font-size:12px;color:var(--tx2);margin-bottom:8px;">Open your backup file in Edge Downloads, select all text (tap and hold → Select All), copy it, then paste it below.</p>
-    <textarea id="paste-area" placeholder='Paste your backup JSON here, starting with {"accounts":...'></textarea>
-    <p class="err" id="paste-err"></p>
-    <div style="display:flex;gap:8px;">
-      <button onclick="closePasteImport()" style="flex:1;">Cancel</button>
-      <button class="bamber" onclick="importPasted()" style="flex:1;"><i class="ti ti-check"></i> Load data</button>
     </div>
   </div>
 
@@ -175,7 +156,6 @@
     <i class="ti ti-users"></i>
     <p>No accounts yet.</p>
     <p style="margin-top:4px;font-size:12px;">Click <strong>New account</strong> to get started.</p>
-    <p style="margin-top:8px;font-size:12px;color:var(--ta);">Have existing data? Tap <strong>Paste backup</strong> above to restore it.</p>
   </div>
 </div>
 
@@ -227,33 +207,6 @@ function load(){try{const s=localStorage.getItem('lt_v4');if(s)db=JSON.parse(s);
 function cur(){return db.accounts.find(a=>a.id===cid)||null;}
 function rateFor(acc,m){const a=acc.rates.filter(r=>r.from<=m);return a.length?a[a.length-1].rate:acc.rates[0].rate;}
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);}
-
-// Paste import
-function openPasteImport(){
-  document.getElementById('paste-area').value='';
-  document.getElementById('paste-err').style.display='none';
-  document.getElementById('paste-panel').classList.remove('hidden');
-  setTimeout(()=>document.getElementById('paste-area').focus(),50);
-}
-function closePasteImport(){
-  document.getElementById('paste-panel').classList.add('hidden');
-}
-function importPasted(){
-  const text=document.getElementById('paste-area').value.trim();
-  const err=document.getElementById('paste-err');
-  err.style.display='none';
-  try{
-    const parsed=JSON.parse(text);
-    if(!parsed.accounts)throw new Error('Invalid');
-    db=parsed;
-    cid=db.accounts.length?db.accounts[0].id:null;
-    save();closePasteImport();renderAll();
-    showToast('Data loaded successfully!');
-  }catch(e){
-    err.textContent='Could not read the data — make sure you copied the entire file contents.';
-    err.style.display='block';
-  }
-}
 
 function openNew(){
   document.getElementById('nname').value='';document.getElementById('ntype').value='lent';
