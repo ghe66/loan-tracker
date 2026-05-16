@@ -135,7 +135,7 @@
   <div id="esec" class="hidden"><p class="stitle">All entries — tap 🗑 to delete and re-enter to correct</p><div class="elist" id="elist"></div></div>
 
   <div id="tsec" class="hidden ptable">
-    <p class="stitle" style="margin-bottom:10px;">Monthly ledger <span style="font-weight:400;font-size:11px;color:var(--tx2);">— interest calculated daily</span></p>
+    <p class="stitle" style="margin-bottom:10px;">Monthly ledger <span style="font-weight:400;font-size:11px;color:var(--tx2);">— interest accrues daily, added at month end</span></p>
     <div style="overflow-x:auto;">
       <table>
         <thead><tr>
@@ -202,105 +202,104 @@ function fmt(n){return n.toLocaleString('sv-SE',{minimumFractionDigits:2,maximum
 function fmtR(r){return r.toLocaleString('sv-SE',{minimumFractionDigits:1,maximumFractionDigits:2})+'%';}
 function mkKey(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
 function ml(key){const[y,m]=key.split('-');return new Date(+y,+m-1,1).toLocaleString('sv-SE',{month:'long',year:'numeric'});}
+function daysInMonth(y,m){return new Date(y,m,0).getDate();}
 function save(){try{localStorage.setItem('lt_v4',JSON.stringify(db));}catch(e){}}
 function load(){try{const s=localStorage.getItem('lt_v4');if(s)db=JSON.parse(s);}catch(e){}}
 function cur(){return db.accounts.find(a=>a.id===cid)||null;}
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);}
 
-// Parse date string to local midnight date
-function parseDate(str){const[y,m,d]=str.split('-').map(Number);return new Date(y,m-1,d);}
-
-// Days in a month
-function daysInMonth(year,month){return new Date(year,month,0).getDate();}
-
-// Get applicable annual rate for a given date
-function rateForDate(acc,date){
-  const dk=mkKey(date);
-  const applicable=acc.rates.filter(r=>r.from<=dk);
+// Get applicable annual rate for a given month key
+function rateForMonth(acc,mk){
+  const applicable=acc.rates.filter(r=>r.from<=mk);
   return applicable.length?applicable[applicable.length-1].rate:acc.rates[0].rate;
 }
 
-// Daily interest calculation
-// For each month, we walk day by day tracking the running balance
-// and accumulate interest = balance * (annualRate/365) per day
+/*
+  Interest calculation method:
+  - For each month, we track the balance day by day
+  - Installments and payments are applied on their exact day
+  - Daily interest = balance_that_day * (annualRate / 365)
+  - All daily interest is ACCUMULATED but NOT added to balance during the month
+  - At month end, the total accumulated interest is added to the balance once
+  - Payments reduce the balance on their exact day (affecting remaining daily interest)
+*/
 function buildLedger(acc){
   const allEvents=[
-    ...acc.installments.map(e=>({date:parseDate(e.date),amount:e.amount,type:'i'})),
-    ...acc.payments.map(e=>({date:parseDate(e.date),amount:e.amount,type:'p'}))
+    ...acc.installments.map(e=>({dateStr:e.date,amount:e.amount,type:'i'})),
+    ...acc.payments.map(e=>({dateStr:e.date,amount:e.amount,type:'p'}))
   ];
   if(!allEvents.length) return [];
 
-  allEvents.sort((a,b)=>a.date-b.date);
+  allEvents.sort((a,b)=>a.dateStr.localeCompare(b.dateStr));
 
-  // Find start and end dates
-  const startDate=new Date(allEvents[0].date);
   const now=new Date();
-  const endDate=new Date(now.getFullYear(),now.getMonth()+1,0); // last day of current month
 
-  // Build a map of events by date string
+  // Build months range
+  const firstDate=allEvents[0].dateStr;
+  const[fy,fm]=firstDate.split('-').map(Number);
+  const months=[];
+  let cy=fy,cm=fm;
+  while(cy<now.getFullYear()||(cy===now.getFullYear()&&cm<=now.getMonth()+1)){
+    months.push(cy+'-'+String(cm).padStart(2,'0'));
+    cm++;if(cm>12){cm=1;cy++;}
+  }
+
+  // Index events by date string
   const eventsByDate={};
   for(const e of allEvents){
-    const dk=e.date.toISOString().slice(0,10);
-    if(!eventsByDate[dk])eventsByDate[dk]=[];
-    eventsByDate[dk].push(e);
+    if(!eventsByDate[e.dateStr])eventsByDate[e.dateStr]=[];
+    eventsByDate[e.dateStr].push(e);
   }
 
-  // Group into months for ledger display
-  const months=[];
-  let cur=new Date(startDate.getFullYear(),startDate.getMonth(),1);
-  const endMonth=new Date(now.getFullYear(),now.getMonth(),1);
-  while(cur<=endMonth){
-    months.push(mkKey(cur));
-    cur=new Date(cur.getFullYear(),cur.getMonth()+1,1);
-  }
-
-  // Walk day by day through all months
   const rows=[];
-  let balance=0;
+  let balance=0; // running balance, only updated by transactions and month-end interest
 
   for(const mk of months){
     const[y,m]=mk.split('-').map(Number);
-    const daysCount=daysInMonth(y,m);
-    const monthStart=new Date(y,m-1,1);
+    const days=daysInMonth(y,m);
+    const annualRate=rateForMonth(acc,mk);
+    const dailyRate=annualRate/100/365;
 
-    let monthInterest=0;
+    const openingBalance=balance;
     let monthLoaned=0;
     let monthPaid=0;
-    const openingBalance=balance;
+    let accruedInterest=0;
 
-    for(let day=1;day<=daysCount;day++){
-      const date=new Date(y,m-1,day);
-      if(date>endDate) break;
+    // Track intra-month balance (affected by transactions but NOT by interest)
+    let intraDayBalance=balance;
 
-      const dk=date.toISOString().slice(0,10);
+    for(let day=1;day<=days;day++){
+      // Stop at today
+      const thisDate=new Date(y,m-1,day);
+      if(thisDate>now) break;
 
-      // Apply events for this day (installments and payments)
+      const dk=y+'-'+String(m).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+
+      // Apply transactions for this day
       if(eventsByDate[dk]){
         for(const e of eventsByDate[dk]){
-          if(e.type==='i'){balance+=e.amount;monthLoaned+=e.amount;}
-          else{balance-=e.amount;monthPaid+=e.amount;}
+          if(e.type==='i'){intraDayBalance+=e.amount;monthLoaned+=e.amount;}
+          else{intraDayBalance-=e.amount;monthPaid+=e.amount;}
         }
       }
 
-      // Accrue daily interest on current balance
-      // Only accrue if balance is positive
-      if(balance>0){
-        const annualRate=rateForDate(acc,date);
-        const dailyRate=annualRate/100/365;
-        const dailyInterest=balance*dailyRate;
-        monthInterest+=dailyInterest;
-        balance+=dailyInterest;
+      // Accrue daily interest on today's balance (not yet added to balance)
+      if(intraDayBalance>0){
+        accruedInterest+=intraDayBalance*dailyRate;
       }
     }
+
+    // At month end: update balance with transactions and add accumulated interest
+    balance=intraDayBalance+accruedInterest;
 
     rows.push({
       mk,
       opening:openingBalance,
       loaned:monthLoaned,
       paid:monthPaid,
-      interest:monthInterest,
+      interest:accruedInterest,
       closing:balance,
-      rate:rateForDate(acc,monthStart)
+      rate:annualRate
     });
   }
 
@@ -415,11 +414,10 @@ function renderAll(){
 function renderAcc(){
   const acc=cur();if(!acc)return;
   labels(acc.type);document.getElementById('abar').classList.remove('hidden');
-  const now=new Date();
-  const nowKey=mkKey(now);
+  const nowKey=mkKey(new Date());
   const applicable=acc.rates.filter(r=>r.from<=nowKey);
   const currentRate=applicable.length?applicable[applicable.length-1].rate:acc.rates[0].rate;
-  document.getElementById('ratelabel').textContent='Current rate: '+fmtR(currentRate)+' / year (daily accrual)';
+  document.getElementById('ratelabel').textContent='Current rate: '+fmtR(currentRate)+' / year';
 
   const rows=buildLedger(acc);
   const tl=acc.installments.reduce((s,e)=>s+e.amount,0);
