@@ -472,8 +472,8 @@ function renderAcc(){
             ${e.note?`<span class="enote">${e.note}</span>`:'<span class="enote" style="opacity:0.4;">no note</span>'}
           </span>
           <span class="ebtns">
-            <button class="bsm" onclick="openEditNote('${e.kind}',${e.idx})" aria-label="Edit note" title="Edit note" style="color:var(--ti);border-color:var(--ti);background:var(--bg-info);"><i class="ti ti-pencil" style="font-size:12px;"></i> Note</button>
-            <button class="bsm" onclick="removeEntry('${e.kind}',${e.idx})" aria-label="Delete entry" title="Delete entry" style="color:var(--td);border-color:var(--td);"><i class="ti ti-trash" style="font-size:12px;"></i></button>
+            <button class="bsm" onclick="openEditNote('${e.kind}',${e.idx})" aria-label="Edit note" title="Edit note" style="color:var(--ti);border-color:var(--ti);background:var(--bg-info);">✏️ Note</button>
+            <button class="bsm" onclick="removeEntry('${e.kind}',${e.idx})" aria-label="Delete entry" title="Delete entry" style="color:var(--td);border-color:var(--td);">🗑</button>
           </span>`;
       }
       elist.appendChild(div);
