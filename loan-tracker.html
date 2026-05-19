@@ -22,6 +22,9 @@
     }
     body { font-family: var(--font); background: var(--bg2); color: var(--tx); min-height: 100vh; padding: 1.5rem 1rem; }
     .container { max-width: 740px; margin: 0 auto; }
+
+    .datebar { font-size: 13px; color: var(--tx2); margin-bottom: 1rem; display: flex; align-items: center; gap: 6px; }
+
     .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.25rem; gap: 8px; flex-wrap: wrap; }
     .topbar-l { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .topbar-r { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -56,8 +59,9 @@
     .err { font-size: 11px; color: var(--td); margin-top: 3px; display: none; }
     .stitle { font-size: 12px; color: var(--tx2); font-weight: 500; margin-bottom: 8px; }
     .elist { display: flex; flex-direction: column; gap: 5px; margin-bottom: 1.25rem; }
-    .entry { display: flex; align-items: center; justify-content: space-between; padding: 7px 9px; background: var(--bg2); border-radius: var(--rm); font-size: 12px; }
-    .el { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .entry { display: flex; align-items: center; justify-content: space-between; padding: 7px 9px; background: var(--bg2); border-radius: var(--rm); font-size: 12px; gap: 6px; }
+    .el { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; flex: 1; }
+    .ebtns { display: flex; gap: 4px; flex-shrink: 0; }
     .edate { color: var(--tx2); }
     .enote { color: var(--tx2); font-style: italic; }
     .rentry { background: var(--bg-amber); }
@@ -78,10 +82,18 @@
     .toast { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--tx); color: var(--bg); padding: 10px 18px; border-radius: var(--rm); font-size: 13px; opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; white-space: nowrap; z-index: 300; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     .hidden { display: none; }
+    .ledger-note { font-size: 11px; color: var(--tx2); margin-bottom: 10px; font-style: italic; }
   </style>
 </head>
 <body>
 <div class="container">
+
+  <!-- Current date bar -->
+  <div class="datebar">
+    <i class="ti ti-calendar" style="font-size:14px;"></i>
+    <span id="current-date"></span>
+  </div>
+
   <div class="topbar">
     <div class="topbar-l">
       <h1>Loan Tracker</h1>
@@ -132,10 +144,14 @@
     </div>
   </div>
 
-  <div id="esec" class="hidden"><p class="stitle">All entries — tap 🗑 to delete and re-enter to correct</p><div class="elist" id="elist"></div></div>
+  <div id="esec" class="hidden">
+    <p class="stitle">All entries — tap <i class="ti ti-pencil" style="font-size:11px;"></i> to edit note, <i class="ti ti-trash" style="font-size:11px;"></i> to delete</p>
+    <div class="elist" id="elist"></div>
+  </div>
 
   <div id="tsec" class="hidden ptable">
-    <p class="stitle" style="margin-bottom:10px;">Monthly ledger <span style="font-weight:400;font-size:11px;color:var(--tx2);">— interest accrues daily, added at month end</span></p>
+    <p class="stitle" style="margin-bottom:4px;">Monthly ledger</p>
+    <p class="ledger-note" id="ledger-note"></p>
     <div style="overflow-x:auto;">
       <table>
         <thead><tr>
@@ -194,47 +210,56 @@
   </div>
 </div>
 
+<!-- Edit note modal -->
+<div class="overlay" id="medit">
+  <div class="modal">
+    <p class="mh">Edit note</p>
+    <label>Note</label>
+    <input type="text" id="edit-note-val" placeholder="Add a note..." />
+    <p class="err" id="edit-err"></p>
+    <div class="mact">
+      <button onclick="closeM('medit')">Cancel</button>
+      <button class="bi" style="flex:1;" onclick="saveNote()"><i class="ti ti-check"></i> Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
 let db={accounts:[]},cid=null;
+let editTarget=null; // {type:'i'|'p', idx:number}
+
 function fmt(n){return n.toLocaleString('sv-SE',{minimumFractionDigits:2,maximumFractionDigits:2})+' kr';}
 function fmtR(r){return r.toLocaleString('sv-SE',{minimumFractionDigits:1,maximumFractionDigits:2})+'%';}
 function mkKey(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
-function ml(key){const[y,m]=key.split('-');return new Date(+y,+m-1,1).toLocaleString('sv-SE',{month:'long',year:'numeric'});}
+function ml(key){const[y,m]=key.split('-');return new Date(+y,+m-1,1).toLocaleString('en-GB',{month:'long',year:'numeric'});}
 function daysInMonth(y,m){return new Date(y,m,0).getDate();}
 function save(){try{localStorage.setItem('lt_v4',JSON.stringify(db));}catch(e){}}
 function load(){try{const s=localStorage.getItem('lt_v4');if(s)db=JSON.parse(s);}catch(e){}}
 function cur(){return db.accounts.find(a=>a.id===cid)||null;}
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);}
 
-// Get applicable annual rate for a given month key
+// Set current date display
+function setDateBar(){
+  const now=new Date();
+  const dateStr=now.toLocaleDateString('en-GB',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  document.getElementById('current-date').textContent=dateStr.charAt(0).toUpperCase()+dateStr.slice(1);
+}
+
 function rateForMonth(acc,mk){
   const applicable=acc.rates.filter(r=>r.from<=mk);
   return applicable.length?applicable[applicable.length-1].rate:acc.rates[0].rate;
 }
 
-/*
-  Interest calculation method:
-  - For each month, we track the balance day by day
-  - Installments and payments are applied on their exact day
-  - Daily interest = balance_that_day * (annualRate / 365)
-  - All daily interest is ACCUMULATED but NOT added to balance during the month
-  - At month end, the total accumulated interest is added to the balance once
-  - Payments reduce the balance on their exact day (affecting remaining daily interest)
-*/
 function buildLedger(acc){
   const allEvents=[
     ...acc.installments.map(e=>({dateStr:e.date,amount:e.amount,type:'i'})),
     ...acc.payments.map(e=>({dateStr:e.date,amount:e.amount,type:'p'}))
   ];
   if(!allEvents.length) return [];
-
   allEvents.sort((a,b)=>a.dateStr.localeCompare(b.dateStr));
-
   const now=new Date();
-
-  // Build months range
   const firstDate=allEvents[0].dateStr;
   const[fy,fm]=firstDate.split('-').map(Number);
   const months=[];
@@ -243,66 +268,36 @@ function buildLedger(acc){
     months.push(cy+'-'+String(cm).padStart(2,'0'));
     cm++;if(cm>12){cm=1;cy++;}
   }
-
-  // Index events by date string
   const eventsByDate={};
   for(const e of allEvents){
     if(!eventsByDate[e.dateStr])eventsByDate[e.dateStr]=[];
     eventsByDate[e.dateStr].push(e);
   }
-
   const rows=[];
-  let balance=0; // running balance, only updated by transactions and month-end interest
-
+  let balance=0;
   for(const mk of months){
     const[y,m]=mk.split('-').map(Number);
     const days=daysInMonth(y,m);
     const annualRate=rateForMonth(acc,mk);
     const dailyRate=annualRate/100/365;
-
     const openingBalance=balance;
-    let monthLoaned=0;
-    let monthPaid=0;
-    let accruedInterest=0;
-
-    // Track intra-month balance (affected by transactions but NOT by interest)
+    let monthLoaned=0,monthPaid=0,accruedInterest=0;
     let intraDayBalance=balance;
-
     for(let day=1;day<=days;day++){
-      // Stop at today
       const thisDate=new Date(y,m-1,day);
       if(thisDate>now) break;
-
       const dk=y+'-'+String(m).padStart(2,'0')+'-'+String(day).padStart(2,'0');
-
-      // Apply transactions for this day
       if(eventsByDate[dk]){
         for(const e of eventsByDate[dk]){
           if(e.type==='i'){intraDayBalance+=e.amount;monthLoaned+=e.amount;}
           else{intraDayBalance-=e.amount;monthPaid+=e.amount;}
         }
       }
-
-      // Accrue daily interest on today's balance (not yet added to balance)
-      if(intraDayBalance>0){
-        accruedInterest+=intraDayBalance*dailyRate;
-      }
+      if(intraDayBalance>0) accruedInterest+=intraDayBalance*dailyRate;
     }
-
-    // At month end: update balance with transactions and add accumulated interest
     balance=intraDayBalance+accruedInterest;
-
-    rows.push({
-      mk,
-      opening:openingBalance,
-      loaned:monthLoaned,
-      paid:monthPaid,
-      interest:accruedInterest,
-      closing:balance,
-      rate:annualRate
-    });
+    rows.push({mk,opening:openingBalance,loaned:monthLoaned,paid:monthPaid,interest:accruedInterest,closing:balance,rate:annualRate});
   }
-
   return rows;
 }
 
@@ -314,6 +309,23 @@ function openNew(){
 function openRate(){
   document.getElementById('rv').value='';document.getElementById('rd').value=new Date().toISOString().slice(0,10);
   document.getElementById('rerr').style.display='none';document.getElementById('mrate').classList.add('open');
+}
+function openEditNote(type,idx){
+  const acc=cur();if(!acc)return;
+  const entry=type==='i'?acc.installments[idx]:acc.payments[idx];
+  editTarget={type,idx};
+  document.getElementById('edit-note-val').value=entry.note||'';
+  document.getElementById('edit-err').style.display='none';
+  document.getElementById('medit').classList.add('open');
+  setTimeout(()=>document.getElementById('edit-note-val').focus(),50);
+}
+function saveNote(){
+  const acc=cur();if(!acc||!editTarget)return;
+  const note=document.getElementById('edit-note-val').value.trim();
+  if(editTarget.type==='i') acc.installments[editTarget.idx].note=note;
+  else acc.payments[editTarget.idx].note=note;
+  editTarget=null;
+  save();closeM('medit');renderAcc();showToast('Note updated!');
 }
 function closeM(id){document.getElementById(id).classList.remove('open');}
 
@@ -414,6 +426,7 @@ function renderAll(){
 function renderAcc(){
   const acc=cur();if(!acc)return;
   labels(acc.type);document.getElementById('abar').classList.remove('hidden');
+
   const nowKey=mkKey(new Date());
   const applicable=acc.rates.filter(r=>r.from<=nowKey);
   const currentRate=applicable.length?applicable[applicable.length-1].rate:acc.rates[0].rate;
@@ -448,10 +461,20 @@ function renderAcc(){
       if(e.kind==='r'){
         div.className='entry rentry';
         const cd=acc.rates.length>1;
-        div.innerHTML=`<span class="el"><i class="ti ti-percentage" style="font-size:13px;color:var(--ta)"></i><span class="edate">${e.from}</span><span style="font-weight:500;color:var(--ta);">Rate → ${fmtR(e.rate)}</span></span>${cd?`<button class="bsm" onclick="removeEntry('r',${e.idx})"><i class="ti ti-trash" style="font-size:12px;"></i></button>`:''}`;
+        div.innerHTML=`<span class="el"><i class="ti ti-percentage" style="font-size:13px;color:var(--ta)"></i><span class="edate">${e.from}</span><span style="font-weight:500;color:var(--ta);">Rate → ${fmtR(e.rate)}</span></span><span class="ebtns">${cd?`<button class="bsm" onclick="removeEntry('r',${e.idx})" aria-label="Delete rate"><i class="ti ti-trash" style="font-size:12px;"></i></button>`:''}</span>`;
       }else{
         const ii=e.kind==='i';div.className='entry';
-        div.innerHTML=`<span class="el"><i class="ti ${ii?'ti-arrow-up-right':'ti-arrow-down-left'}" style="font-size:13px;color:${ii?'var(--td)':'var(--ts)'}"></i><span class="edate">${e.date}</span><span style="font-weight:500;">${ii?'+':'−'}${fmt(e.amount)}</span>${e.note?`<span class="enote">${e.note}</span>`:''}</span><button class="bsm" onclick="removeEntry('${e.kind}',${e.idx})"><i class="ti ti-trash" style="font-size:12px;"></i></button>`;
+        div.innerHTML=`
+          <span class="el">
+            <i class="ti ${ii?'ti-arrow-up-right':'ti-arrow-down-left'}" style="font-size:13px;color:${ii?'var(--td)':'var(--ts)'}"></i>
+            <span class="edate">${e.date}</span>
+            <span style="font-weight:500;">${ii?'+':'−'}${fmt(e.amount)}</span>
+            ${e.note?`<span class="enote">${e.note}</span>`:'<span class="enote" style="opacity:0.4;">no note</span>'}
+          </span>
+          <span class="ebtns">
+            <button class="bsm" onclick="openEditNote('${e.kind}',${e.idx})" aria-label="Edit note" title="Edit note" style="color:var(--ti);border-color:var(--ti);background:var(--bg-info);"><i class="ti ti-pencil" style="font-size:12px;"></i> Note</button>
+            <button class="bsm" onclick="removeEntry('${e.kind}',${e.idx})" aria-label="Delete entry" title="Delete entry" style="color:var(--td);border-color:var(--td);"><i class="ti ti-trash" style="font-size:12px;"></i></button>
+          </span>`;
       }
       elist.appendChild(div);
     }
@@ -459,7 +482,14 @@ function renderAcc(){
 
   const tsec=document.getElementById('tsec');
   if(rows.length){
-    tsec.classList.remove('hidden');const tbody=document.getElementById('tbody');tbody.innerHTML='';let pr=null;
+    tsec.classList.remove('hidden');
+
+    // Ledger note showing interest calculated up to today
+    const now=new Date();
+    const todayStr=now.toLocaleDateString('en-GB',{year:'numeric',month:'long',day:'numeric'});
+    document.getElementById('ledger-note').textContent='Interest calculated daily up to and including '+todayStr+'.';
+
+    const tbody=document.getElementById('tbody');tbody.innerHTML='';let pr=null;
     for(const r of rows){
       const tr=document.createElement('tr');
       const rc=r.rate!==pr&&pr!==null?'var(--ta)':'var(--tx2)';
@@ -484,7 +514,9 @@ function importFile(ev){
 
 document.getElementById('mnew').addEventListener('click',function(e){if(e.target===this)closeM('mnew');});
 document.getElementById('mrate').addEventListener('click',function(e){if(e.target===this)closeM('mrate');});
+document.getElementById('medit').addEventListener('click',function(e){if(e.target===this)closeM('medit');});
 
+setDateBar();
 load();if(db.accounts.length)cid=db.accounts[0].id;renderAll();
 </script>
 </body>
